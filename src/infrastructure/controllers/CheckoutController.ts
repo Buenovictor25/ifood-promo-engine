@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { DescontoProgressivoRule, CashbackProgressivoRule } from '../../core/rules/PromoChain';
+import { Pedido } from '../../core/entities/Pedido';
 import winston from 'winston';
 
 const logger = winston.createLogger({
@@ -21,8 +22,22 @@ export class CheckoutController {
     if (key) idempotencyKeys.add(key);
 
     try {
-      let pedido = req.body;
-      logger.info({ message: "Iniciando processamento", payload: pedido });
+      let pedido: Pedido = req.body;
+
+      // -------------------------------------------------------------------
+      // CÁLCULO AUTOMÁTICO (E SEGURANÇA):
+      // Ignora o valorTotal enviado pelo cliente e recalcula baseado nos itens
+      // -------------------------------------------------------------------
+      const totalCalculado = pedido.itens.reduce((acumulador, item) => {
+        return acumulador + (item.preco * item.quantidade);
+      }, 0);
+      
+      pedido.valorTotal = Number(totalCalculado.toFixed(2));
+      
+      pedido.cashbackAcumulado = pedido.cashbackAcumulado || 0;
+      pedido.detalhesPromo = pedido.detalhesPromo || [];
+
+      logger.info({ message: "Iniciando processamento", payloadInicial: pedido });
 
       const regras = [new DescontoProgressivoRule(), new CashbackProgressivoRule()];
       for (const regra of regras) {
@@ -31,7 +46,8 @@ export class CheckoutController {
 
       logger.info({ message: "Sucesso", payloadFinal: pedido });
       res.status(200).json(pedido);
-    } catch (error) {
+    } catch (error: any) {
+      logger.error({ message: "Erro", error: error.message });
       res.status(500).json({ error: "Erro interno" });
     }
   }
